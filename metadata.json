@@ -1,0 +1,7 @@
+{
+  "name": "OmniMix Virtual Console",
+  "description": "A professional, low-latency skeuomorphic virtual audio mixer simulation featuring 8 channels, real-time DSP effects, and VBAN network monitoring.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
