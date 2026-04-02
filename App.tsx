@@ -31,15 +31,23 @@ const INITIAL_MASTER: MasterSettings = {
     reverb: 0, delay: 0, noiseReduction: 0, aec: false, masterGain: 0.8
 };
 
+const readJsonFromStorage = <T,>(key: string, fallback: T): T => {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch (error) {
+    console.warn(`Failed to parse localStorage key "${key}", using defaults.`, error);
+    return fallback;
+  }
+};
+
 const App: React.FC = () => {
   const [channels, setChannels] = useState<ChannelSettings[]>(() => {
-      const saved = localStorage.getItem('omni_channels');
-      return saved ? JSON.parse(saved) : INITIAL_CHANNELS;
+      return readJsonFromStorage('omni_channels', INITIAL_CHANNELS);
   });
   
   const [masterSettings, setMasterSettings] = useState<MasterSettings>(() => {
-      const saved = localStorage.getItem('omni_master');
-      return saved ? JSON.parse(saved) : INITIAL_MASTER;
+      return readJsonFromStorage('omni_master', INITIAL_MASTER);
   });
 
   const [inputDevices, setInputDevices] = useState<MediaDeviceInfo[]>([]);
@@ -58,6 +66,13 @@ const App: React.FC = () => {
 
   const refreshDevices = async () => {
       try {
+        if (!navigator.mediaDevices?.enumerateDevices) {
+          console.warn('MediaDevices API is not available.');
+          setInputDevices([]);
+          setOutputDevices([]);
+          return;
+        }
+
         let devices = await navigator.mediaDevices.enumerateDevices();
         
         // If device labels are empty, we need to request permission
@@ -99,6 +114,7 @@ const App: React.FC = () => {
       await refreshDevices();
       
       // Initialize channels in engine
+      audioEngine.updateSoloState(channels);
       channels.forEach(ch => {
           audioEngine.createChannelStrip(ch.id);
           // Re-connect device if it was saved
@@ -130,6 +146,7 @@ const App: React.FC = () => {
 
   useEffect(() => {
       audioHealthMonitor.updateChannels(channels);
+      audioEngine.updateSoloState(channels);
       channels.forEach(ch => audioEngine.updateChannel(ch));
   }, [channels]);
 

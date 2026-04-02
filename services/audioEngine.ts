@@ -87,6 +87,7 @@ interface ChannelStripNodes {
 class AudioEngine {
   private context: AudioContext | null = null;
   private channels: Map<number, ChannelStripNodes> = new Map();
+  private soloChannelIds: Set<number> = new Set();
   private masterGain: GainNode | null = null;
   private masterCompressor: DynamicsCompressorNode | null = null;
   private masterMeter: AnalyserNode | null = null;
@@ -108,6 +109,10 @@ class AudioEngine {
     if (this.context) {
         if (this.context.state !== 'closed') await this.context.close();
     }
+    this.channels.clear();
+    this.meterStates.clear();
+    this.masterMeterState = { rms: 0, peak: 0 };
+    this.soloChannelIds.clear();
     
     // @ts-ignore - Some browsers strictly enforce typed latencyHint
     const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
@@ -121,7 +126,11 @@ class AudioEngine {
     try {
         const blob = new Blob([GATE_PROCESSOR_CODE], { type: 'application/javascript' });
         const url = URL.createObjectURL(blob);
-        await this.context.audioWorklet.addModule(url);
+        try {
+          await this.context.audioWorklet.addModule(url);
+        } finally {
+          URL.revokeObjectURL(url);
+        }
         this.workletInitialized = true;
         console.log("OmniGate Processor Loaded on Audio Thread");
     } catch (e) {
@@ -253,7 +262,11 @@ class AudioEngine {
       if (deviceId === 'display-capture') {
          try {
              // @ts-ignore
-             stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+             const capturedStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+             // Keep only audio to reduce GPU/CPU overhead from shared video.
+             const audioOnlyStream = new MediaStream(capturedStream.getAudioTracks());
+             capturedStream.getVideoTracks().forEach(t => t.stop());
+             stream = audioOnlyStream;
          } catch (e) {
              console.warn(`Display media cancelled or failed for Ch ${id}`, e);
              return;
@@ -360,7 +373,8 @@ class AudioEngine {
     ch.panNode.pan.setTargetAtTime(settings.pan, this.context.currentTime, 0.1);
     
     // Mute/Solo Logic
-    const gainVal = settings.mute ? 0 : settings.gain;
+    const isSoloSuppressed = this.soloChannelIds.size > 0 && !this.soloChannelIds.has(settings.id);
+    const gainVal = (settings.mute || isSoloSuppressed) ? 0 : settings.gain;
     ch.gainNode.gain.setTargetAtTime(gainVal, this.context.currentTime, 0.05);
 
     // 5. Monitoring Logic (Playback)
@@ -377,6 +391,11 @@ class AudioEngine {
             console.log(`[AudioEngine] Channel ${settings.id} monitoring OFF`);
         }
     }
+  }
+
+  updateSoloState(channels: ChannelSettings[]) {
+    const activeSoloIds = new Set(channels.filter(ch => ch.solo).map(ch => ch.id));
+    this.soloChannelIds = activeSoloIds;
   }
 
   updateMaster(settings: MasterSettings) {
